@@ -7,7 +7,7 @@ import { getReactNativePersistence } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDi0kek0c80-cVVAcGIeDqLOYqjudIzkrs",
+  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
   authDomain: "foodwasteapp-7404e.firebaseapp.com",
   projectId: "foodwasteapp-7404e",
   storageBucket: "foodwasteapp-7404e.firebasestorage.app",
