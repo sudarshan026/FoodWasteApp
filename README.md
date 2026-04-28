@@ -19,6 +19,7 @@ A React Native (Expo) mobile application that helps users **track food inventory
 11. [Theme System](#theme-system)
 12. [Data & Utilities](#data--utilities)
 13. [UI → Code Mapping (Quick Reference)](#ui--code-mapping-quick-reference)
+14. [Notifications System](#notifications-system)
 
 ---
 
@@ -35,6 +36,7 @@ A React Native (Expo) mobile application that helps users **track food inventory
 | **Spoonacular API** | Live recipe suggestions by ingredients | `recipeService.ts`, `apiConfig.ts` |
 | **OpenStreetMap Overpass API** | Find nearby NGOs/food banks by GPS location | `donationService.ts` |
 | **expo-location** | Get user's GPS coordinates | `donationService.ts` |
+| **expo-notifications** | Local push notifications for expiry alerts | `notificationService.ts` |
 | **AsyncStorage** | Local key-value storage, Firebase auth persistence | `storage.ts`, `firebaseConfig.ts` |
 | **react-native-chart-kit** | Line chart on Analytics screen | `AnalyticsScreen.tsx` |
 | **date-fns** | Date formatting & math (expiry calculations) | `inventoryService.ts`, multiple screens |
@@ -66,6 +68,7 @@ FoodWasteApp/
     │   ├── recipeService.ts       ← Spoonacular API recipe matching
     │   ├── donationService.ts     ← NGO discovery + donation creation
     │   ├── analyticsService.ts    ← Compute waste/savings analytics
+    │   ├── notificationService.ts ← Local push notifications for expiry alerts
     │   └── storage.ts             ← AsyncStorage wrapper (local storage)
     │
     ├── context/                   ← React Context providers (global state)
@@ -242,6 +245,21 @@ Uses the **Spoonacular API** to find recipes that match the user's current inven
 | Function | What It Does |
 |---|---|
 | **`AnalyticsService.getAnalytics(userId)`** | Computes all analytics from real Firestore data: **wasteReduced** = kg estimate from donated items + tracked items. **moneySaved** = ₹30 per tracked item + ₹50 per donation. **weeklyData** = donation quantities grouped by day of week (for the line chart). **categoryBreakdown** = count of items per category (Fridge/Pantry/Freezer) for the bar chart. **monthlyGoal** = hardcoded 10 kg target. **monthlyProgress** = current waste reduced capped at goal. |
+
+### `src/services/notificationService.ts` — Push Notifications Service
+
+Uses **expo-notifications** to send local push notifications to the user's device.
+
+| Function | What It Does |
+|---|---|
+| **`NotificationService.requestPermissions()`** | Requests permission from the user to send notifications. On Android, creates a notification channel called "expiry-alerts" with high importance, vibration pattern, and green light color. Returns `true` if permission granted, `false` otherwise. Must be called before scheduling any notifications. |
+| **`NotificationService.scheduleExpiryNotifications(items)`** | 1. Cancels all previously scheduled notifications to avoid duplicates. 2. For each food item, calculates days until expiry. 3. **If expired:** sends immediate alert "🚨 {item} has expired!". 4. **If expires today:** sends immediate alert "⚠️ {item} expires today!". 5. **If expires tomorrow:** schedules reminder for tomorrow morning. 6. **If expires in 2-3 days:** schedules a reminder to plan ahead. Uses `date-fns` to calculate date differences. Called whenever inventory is loaded or updated. |
+| **`NotificationService.sendImmediateNotification(title, body, data)`** | Sends a notification to the user immediately. Trigger is `null` (fires instantly). Used for urgent alerts (expired or expires today). |
+| **`NotificationService.scheduleNotification(title, body, data, daysFromNow)`** | Schedules a notification to fire after a specified number of days. Uses Expo's `TIME_INTERVAL` trigger type with a minimum of 60 seconds delay. Used for advance reminders. |
+| **`NotificationService.sendDonationNotification(ngoName, itemCount)`** | Sends a celebratory notification when user completes a donation: "🎉 Donation Confirmed! Your {itemCount} item(s) donation to {ngoName} has been recorded." Called after `DonationService.createDonation()` succeeds. |
+| **`NotificationService.sendWelcomeNotification(userName)`** | Sends a welcome notification when a new user signs up: "🌿 Welcome to FoodSaver, {userName}! Start by adding food items...". Called in `AuthContext.signup()`. |
+| **`NotificationService.cancelAll()`** | Cancels all scheduled notifications. Called on logout or when user dismisses notifications. |
+| **`NotificationService.getPendingCount()`** | Returns the number of currently pending (scheduled but not yet fired) notifications. Used for debugging and UI purposes. |
 
 ### `src/services/storage.ts` — Local Storage Wrapper
 
@@ -579,6 +597,48 @@ Use this table to quickly find where any UI feature lives in the code:
 | **Bottom tab bar** | `navigation/MainTabs.tsx` | — | — |
 | **Expiry color badges** | `components/Badge.tsx` + `components/FoodItemCard.tsx` | `InventoryService.getExpiryStatus()` | — |
 | **Loading spinners** | `components/LoadingSpinner.tsx` | — | — |
+| **Expiry notifications** | All screens that load/update inventory | `NotificationService.scheduleExpiryNotifications()` | — |
+| **Donation confirmation notification** | `screens/donate/DonationConfirmScreen.tsx` | `NotificationService.sendDonationNotification()` | — |
+| **Welcome notification** | `screens/auth/SignupScreen.tsx` | `NotificationService.sendWelcomeNotification()` | — |
+
+---
+
+## Notifications System
+
+The app uses **expo-notifications** to send local push notifications to the user's device for two main purposes:
+
+### 1. **Expiry Alerts**
+When inventory is loaded or updated, the app calls `NotificationService.scheduleExpiryNotifications()` which:
+- **Cancels all previous notifications** to prevent duplicates
+- **Sends immediate alerts** for items that are already expired or expire today
+- **Schedules advance reminders** for items expiring in 1-3 days
+- Uses color-coded emojis to indicate urgency (🚨 for expired, ⚠️ for today, ⏰ for tomorrow, 📋 for 2-3 days)
+
+**Notification Content Example:**
+- 🚨 "Milk has expired!" → "Milk expired 2 day(s) ago. Consider discarding or composting it."
+- ⚠️ "Eggs expire today!" → "Use Eggs (6 pcs) today before it goes bad. Check recipes for ideas!"
+- ⏰ "Cheese expires tomorrow!" → "Don't forget — Cheese (500g) expires tomorrow. Cook it or donate it!"
+- 📋 "Yogurt expires in 2 days" → "Yogurt (1 L) in your Fridge will expire in 2 days. Plan ahead!"
+
+### 2. **Donation Confirmation**
+When a user successfully donates items, the app sends a celebratory notification:
+- 🎉 "Donation Confirmed!" → "Thank you! Your X item(s) donation to [NGO Name] has been recorded. You're making a difference!"
+
+### 3. **Welcome Notification**
+When a new user signs up, they receive:
+- 🌿 "Welcome to FoodSaver, {name}!" → "Start by adding food items to your inventory. We'll notify you before anything expires!"
+
+### How Notifications Work
+
+1. **Permission Request** — First time the app runs, it requests notification permission via `NotificationService.requestPermissions()`. On Android, this creates a notification channel with high importance and custom sound/vibration.
+
+2. **Scheduling on Inventory Load** — Every time inventory items are loaded (on app startup or when adding/updating items), the app calls `scheduleExpiryNotifications()` which intelligently schedules reminders based on expiry dates.
+
+3. **Platform-Specific Behavior**
+   - **iOS:** Uses Expo's native notification system via APNs (Apple Push Notification service)
+   - **Android:** Dispatches notifications through the "expiry-alerts" notification channel with vibration and green status light
+
+4. **Notification Handling** — When the app is in the foreground, notifications appear as banners with sound and badge. When in the background or closed, they appear in the device's notification center.
 
 ---
 
